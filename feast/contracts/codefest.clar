@@ -1,5 +1,5 @@
-;; Holiday Gift Exchange Protocol v2
-;; Added matching system and basic gift distribution
+;; Holiday Gift Exchange Protocol v3
+;; Added gift distribution and time-locking
 
 ;; Constants
 (define-constant admin-wallet tx-sender)
@@ -8,11 +8,14 @@
 (define-constant error-insufficient-funds (err u203))
 (define-constant error-unknown-member (err u204))
 (define-constant error-matching-complete (err u205))
+(define-constant error-locked-period (err u206))
+(define-constant error-gift-redeemed (err u207))
 (define-constant error-group-size (err u208))
 (define-constant error-matching-error (err u209))
 
 ;; State Variables
 (define-data-var enrollment-active bool true)
+(define-data-var distribution-timestamp uint u1703462400) ;; Dec 24, 2024 00:00:00 UTC
 (define-data-var member-total uint u0)
 (define-data-var entry-fee-min uint u100)
 (define-data-var group-size-min uint u3)
@@ -24,12 +27,14 @@
     active: bool,
     deposit: uint,
     matched: bool,
+    collected: bool,
     sequence: uint
   }
 )
 
 (define-map member-sequence uint principal)
 (define-map gift-assignments principal principal)
+(define-map gift-sources principal principal)
 
 ;; Helper Functions
 (define-private (check-membership (wallet principal))
@@ -56,6 +61,7 @@
       active: true,
       deposit: deposit,
       matched: false,
+      collected: false,
       sequence: current-members
     })
     
@@ -81,6 +87,7 @@
       (next-member (unwrap! (map-get? member-sequence next-match) error-matching-error))
     )
       (map-set gift-assignments current-member next-member)
+      (map-set gift-sources next-member current-member)
       
       (map-set members current-member 
         (merge (unwrap! (map-get? members current-member) error-unknown-member)
@@ -91,6 +98,35 @@
       (if (is-eq (+ current-match u1) total-members)
         (var-set enrollment-active false)
         true)
+      
+      (ok true)))
+)
+
+(define-public (check-recipient)
+  (let ((participant tx-sender))
+    (asserts! (>= block-height (var-get distribution-timestamp)) error-locked-period)
+    (asserts! (check-membership participant) error-unknown-member)
+    (asserts! (check-matching-status participant) error-matching-complete)
+    
+    (ok (unwrap! (map-get? gift-sources participant) error-unknown-member)))
+)
+
+(define-public (collect-gift)
+  (let (
+    (recipient tx-sender)
+    (member-info (unwrap! (map-get? members recipient) error-unknown-member))
+  )
+    (asserts! (>= block-height (var-get distribution-timestamp)) error-locked-period)
+    (asserts! (not (get collected member-info)) error-gift-redeemed)
+    
+    (let ((gifter (unwrap! (map-get? gift-sources recipient) error-unknown-member)))
+      (try! (as-contract (stx-transfer? 
+        (get deposit (unwrap! (map-get? members gifter) error-unknown-member))
+        tx-sender
+        recipient)))
+      
+      (map-set members recipient 
+        (merge member-info { collected: true }))
       
       (ok true)))
 )
@@ -132,4 +168,8 @@
 
 (define-read-only (get-assigned-recipient (gifter principal))
   (map-get? gift-assignments gifter)
+)
+
+(define-read-only (get-distribution-time)
+  (var-get distribution-timestamp)
 )
