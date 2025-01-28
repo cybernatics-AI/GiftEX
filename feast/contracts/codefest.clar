@@ -1,7 +1,6 @@
-;; Holiday Gift Exchange Protocol v3
-;; Added gift distribution and time-locking
+;; Holiday Gift Exchange Protocol
 
-;; Constants
+;; Core Constants
 (define-constant admin-wallet tx-sender)
 (define-constant error-unauthorized (err u201))
 (define-constant error-duplicate-entry (err u202))
@@ -13,15 +12,15 @@
 (define-constant error-group-size (err u208))
 (define-constant error-matching-error (err u209))
 
-;; State Variables
+;; Protocol State
 (define-data-var enrollment-active bool true)
 (define-data-var distribution-timestamp uint u1703462400) ;; Dec 24, 2024 00:00:00 UTC
-(define-data-var member-total uint u0)
-(define-data-var entry-fee-min uint u100)
 (define-data-var group-size-min uint u3)
+(define-data-var entry-fee-min uint u100)
+(define-data-var member-total uint u0)
 (define-data-var matching-progress uint u0)
 
-;; Storage
+;; Data Storage
 (define-map members principal 
   {
     active: bool,
@@ -33,19 +32,23 @@
 )
 
 (define-map member-sequence uint principal)
-(define-map gift-assignments principal principal)
-(define-map gift-sources principal principal)
+(define-map gift-assignments principal principal) ;; Gifter -> Recipient
+(define-map gift-sources principal principal) ;; Recipient -> Gifter
 
 ;; Helper Functions
 (define-private (check-membership (wallet principal))
   (default-to false (get active (map-get? members wallet)))
 )
 
+(define-private (get-deposit-amount (wallet principal))
+  (default-to u0 (get deposit (map-get? members wallet)))
+)
+
 (define-private (check-matching-status (wallet principal))
   (default-to false (get matched (map-get? members wallet)))
 )
 
-;; Core Functions
+;; Core Protocol Functions
 (define-public (join-exchange (deposit uint))
   (let (
     (participant tx-sender)
@@ -149,7 +152,7 @@
     (ok true))
 )
 
-;; Read-only Functions
+;; Query Functions
 (define-read-only (get-member-details (participant principal))
   (map-get? members participant)
 )
@@ -164,12 +167,4 @@
 
 (define-read-only (get-matching-progress)
   (var-get matching-progress)
-)
-
-(define-read-only (get-assigned-recipient (gifter principal))
-  (map-get? gift-assignments gifter)
-)
-
-(define-read-only (get-distribution-time)
-  (var-get distribution-timestamp)
 )
